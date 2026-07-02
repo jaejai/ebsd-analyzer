@@ -1,0 +1,30 @@
+# pixi project for EBSD Analyzer.
+#
+# Uses ONLY the conda-forge channel (community-run, free for commercial use).
+# It does NOT use Anaconda's `defaults` channel, so no Anaconda commercial
+# licence / Terms-of-Service acceptance is ever required for enterprise users.
+#
+# pixi itself is BSD-3-Clause (from prefix.dev), free for any use.
+#
+#   pixi install     -> create the locked environment (deps from conda-forge)
+#   pixi run app      -> launch the GUI
+[workspace]
+name = "ebsd-analyzer"
+version = "1.0.0"
+description = "EBSD microstructure + ODF texture analyzer (GUI)"
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64"]
+
+[tasks]
+app = "python app.py"
+
+# Pinned to the versions verified against the notebook (EBSD_lite_standalone env).
+[dependencies]
+python = "3.12.*"
+numpy = "2.3.*"
+scipy = "1.17.*"
+matplotlib-base = "3.10.*"
+orix = "0.14.*"
+python-pptx = "1.0.*"
+pillow = "12.1.*"
+pyside6 = "6.11.*"

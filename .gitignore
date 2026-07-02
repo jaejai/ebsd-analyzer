@@ -1,0 +1,22 @@
+# pixi environment (built on the user's machine at install time; NEVER commit — 1.8 GB)
+.pixi/
+.pixi-bin/
+
+# PyInstaller build artifacts
+build/
+build2/
+dist/
+
+# Inno Setup output
+packaging/Output/
+
+# Python
+__pycache__/
+*.pyc
+
+# test / scratch artifacts
+_*.pptx
+_*.png
+_*.txt
+_test_report.pptx
+_gui_test.pptx
