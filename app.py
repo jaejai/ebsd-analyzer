@@ -16,6 +16,11 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+# When frozen by PyInstaller, __file__ lives inside the bundle, so data next to
+# the .exe would never be found. Resolve paths against the executable instead.
+if getattr(sys, "frozen", False):
+    HERE = os.path.dirname(os.path.abspath(sys.executable))
+    ROOT = os.path.dirname(HERE)
 for p in (HERE, ROOT):
     if p not in sys.path:
         sys.path.insert(0, p)
@@ -132,7 +137,12 @@ class MainWindow(QMainWindow):
         return h
 
     def _build_sidebar(self):
-        side = QFrame(); side.setObjectName("Sidebar"); side.setFixedWidth(384)
+        # Wide enough for the Step-2 boundary editor (name/lo/hi/colour/width row)
+        # to show every value without clipping.
+        # Wide enough for the Step-2 boundary table (name / lo / hi / colour /
+        # width) to show every value — including the longest colour name — at
+        # its measured width, with room for the scrollbar.
+        side = QFrame(); side.setObjectName("Sidebar"); side.setFixedWidth(560)
         lay = QVBoxLayout(side); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
 
         # --- pipeline nav ---
@@ -317,9 +327,27 @@ class MainWindow(QMainWindow):
             if lv is not None:
                 lv.appendPlainText(msg)
 
+    def _sync_detected_symmetry(self):
+        """After a run, reflect the auto-detected crystal symmetry in the Step 2
+        combo so the user can see what was actually used (without overriding a
+        manual choice — only updates when the combo is on '(from data)')."""
+        try:
+            if self.micro is None or not self.micro.phases:
+                return
+            combo = self.step_ctrls[1].get("crystal_sym")
+            if combo is None or not combo.currentText().startswith("("):
+                return
+            sym = self.micro.pid2phase[self.micro.dominant_pid]["sym"]
+            i = combo.findText(sym)
+            if i >= 0:
+                combo.setItemText(0, f"(from data: {sym})")
+        except (AttributeError, IndexError, KeyError):
+            pass
+
     def on_stage_done(self, stage, micro, odf):
         self.micro = micro; self.odf = odf
         self._update_metrics()
+        self._sync_detected_symmetry()
         self._refresh_step_figs(stage)
         if self._run_all and stage < STAGE_ODF:
             self.goto_step(stage + 1)
@@ -379,18 +407,43 @@ class MainWindow(QMainWindow):
 
         try:
             if stage == STAGE_LOAD and m is not None:
-                wire(refs1["phase"], lambda: P.fig_iq(m))
+                wire(refs1["phase"], lambda: P.fig_iq(cfg, m))
                 refs1["pts"].set_value(f"{m.iq.size:,}")
                 refs1["grid"].set_value(f"{m.nx} × {m.ny}")
                 refs1["step"].set_value(f"{m.step:.3f} µm")
                 refs1["extent"].set_value(f"{(m.nx-1)*m.step:.1f} × {(m.ny-1)*m.step:.1f}")
             if stage == STAGE_MICRO and m is not None:
-                wire(refs2["iq"], lambda: P.fig_iq(m))
-                wire(refs2["ci"], lambda: P.fig_ci(m))
-                wire(refs2["ipf"], lambda: P.fig_ipf(cfg, m))
-                wire(refs2["gb"], lambda: P.fig_gb(cfg, m))
-                wire(refs2["ipfgb"], lambda: P.fig_ipf_hagb(cfg, m))
-                wire(refs2["grain"], lambda: P.fig_grains(cfg, m))
+                # builders for every possible map; only the selected ones (and
+                # the phase map when multiphase) are placed + drawn.
+                builders = {
+                    "iq":     lambda: P.fig_iq(cfg, m),
+                    "ci":     lambda: P.fig_ci(cfg, m),
+                    "ipf100": lambda: P.fig_ipf(cfg, m, direction=(1, 0, 0)),
+                    "ipf010": lambda: P.fig_ipf(cfg, m, direction=(0, 1, 0)),
+                    "ipf001": lambda: P.fig_ipf(cfg, m, direction=(0, 0, 1)),
+                    "ipf_custom": lambda: P.fig_ipf(cfg, m, direction=cfg.ipf_dir),
+                    "gb":     lambda: P.fig_gb(cfg, m),
+                    "ipfgb":  lambda: P.fig_ipf_hagb(cfg, m),
+                    "grain":  lambda: P.fig_grains(cfg, m),
+                    "phase":  lambda: P.fig_phase(cfg, m),
+                }
+                selected = list(cfg.show_maps)
+                if len(m.phases) > 1 and "phase" not in selected:
+                    selected.append("phase")   # auto-show phase map for multiphase
+                grid = refs2["_map_grid"]
+                # detach all panes, then place the selected ones in order
+                for key in refs2["_map_order"]:
+                    pane = refs2[key]
+                    grid.removeWidget(pane); pane.setVisible(False)
+                pos = 0
+                for key in refs2["_map_order"]:
+                    if key not in selected:
+                        continue
+                    pane = refs2[key]
+                    grid.addWidget(pane, pos // 3, pos % 3)
+                    pane.setVisible(True)
+                    wire(pane, builders[key])
+                    pos += 1
             if stage == STAGE_GRAINSIZE and m is not None:
                 wire(refs3["count"], lambda: P.fig_grain_size_count(m, cfg.hist_bins))
                 wire(refs3["frac"], lambda: P.fig_grain_size_frac(m, cfg.hist_bins))
@@ -434,35 +487,67 @@ class MainWindow(QMainWindow):
 
 def _selftest():
     """Headless end-to-end check of the bundled compute path (orix, scipy,
-    gsh_core, matplotlib, python-pptx). Run with:  EBSD_Analyzer.exe --selftest
+    spherical+quaternionic, matplotlib, python-pptx). Tests BOTH ODF engines.
+    Run with:  EBSD_Analyzer.exe --selftest
     Exits 0 on success, 1 on failure. Used to verify the frozen build."""
     import traceback
+    import numpy as np
     try:
         import matplotlib
         matplotlib.use("Agg")
         from ebsd_engine import Config, run_microstructure, run_odf, build_report
         # locate a .ang: next to the exe, or the dev dp_data folder
         candidates = [
+            os.path.join(ROOT, "dp_data", "DP590-InitialX1000_pre(1).ang"),
             os.path.join(ROOT, "dp_data", "DP590_Initial_x2000(1).ang"),
             os.path.join(os.path.dirname(sys.executable), "DP590_Initial_x2000(1).ang"),
         ]
         ang = next((c for c in candidates if os.path.isfile(c)), None)
         if ang is None:
             print("SELFTEST: no .ang found; import-only check")
-            import orix, gsh_core, scipy, pptx, PIL  # noqa
-            print("SELFTEST IMPORTS OK")
+            import orix, scipy, pptx, PIL, spherical, quaternionic  # noqa
+            print("SELFTEST IMPORTS OK (incl spherical+quaternionic)")
             return 0
         cfg = Config(ang_file=ang)
         m = run_microstructure(cfg, log=lambda *a: None)
-        o = run_odf(cfg, m, log=lambda *a: None)
+        # test BOTH ODF engines (kernel needs only orix; harmonic needs
+        # spherical+quaternionic — the frozen-build risk)
+        results = {}
+        for method in ("kernel", "harmonic"):
+            cfg.odf_method = method
+            o = run_odf(cfg, m, log=lambda *a: None)
+            nan = bool(np.isnan(o.odf).any())
+            results[method] = (o.J, nan)
+            print(f"SELFTEST ODF[{method}]: J={o.J:.3f} NaN={nan}")
+        # build a report with the last (harmonic) result to exercise plotting/pptx
         out = os.path.join(os.path.dirname(sys.executable), "_selftest.pptx")
         build_report(cfg, m, o, out, mode="all", log=lambda *a: None)
-        ok = os.path.getsize(out) > 0
-        print(f"SELFTEST: grains={m.n_grains} G={m.G_e2627:.1f} J={o.J:.3f} pptx={os.path.getsize(out)}")
+        ok = (os.path.getsize(out) > 0
+              and not results["kernel"][1] and not results["harmonic"][1])
+        print(f"SELFTEST: grains={m.n_grains} G={m.G_e2627:.1f} pptx={os.path.getsize(out)}")
         try:
             os.remove(out)
         except OSError:
             pass
+
+        # --- multiphase check (only if the synthetic 2-phase file is present) ---
+        mp = os.path.join(ROOT, "ruan dat", "synthetic_mixed.ang")
+        if os.path.isfile(mp):
+            cfg2 = Config(input_file=mp, odf_method="kernel", n_sample=6000)
+            m2 = run_microstructure(cfg2, log=lambda *a: None)
+            o2 = run_odf(cfg2, m2, log=lambda *a: None)
+            ph = m2.phase.reshape(m2.ny, m2.nx)
+            cross = ph[:, :-1] != ph[:, 1:]
+            cross_ok = bool(np.isfinite(m2.mis_h[cross]).sum() == 0)  # all cross = inf
+            js = {pr.name: pr.J for pr in o2.per_phase.values()}
+            j_ok = (len(o2.per_phase) == 2
+                    and all(np.isfinite(v) for v in js.values()))
+            print(f"SELFTEST MULTIPHASE: phases={len(m2.phases)} J={js} "
+                  f"cross-phase-inf={cross_ok}")
+            ok = ok and cross_ok and j_ok
+        else:
+            print("SELFTEST MULTIPHASE: skipped (synthetic_mixed.ang not bundled)")
+
         print("SELFTEST OK" if ok else "SELFTEST FAIL")
         return 0 if ok else 1
     except Exception:

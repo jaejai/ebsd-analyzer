@@ -77,7 +77,7 @@ def _heading(s, text, size=30):
 def add_ebsd_slides(prs, cfg: Config, res: MicroResult):
     dpi = cfg.fig_dpi; nb = cfg.hist_bins
     figs = {
-        "iq": _grab(P.fig_iq(res), dpi), "ci": _grab(P.fig_ci(res), dpi),
+        "iq": _grab(P.fig_iq(cfg, res), dpi), "ci": _grab(P.fig_ci(cfg, res), dpi),
         "ipf": _grab(P.fig_ipf(cfg, res), dpi), "grains": _grab(P.fig_grains(cfg, res), dpi),
         "gb": _grab(P.fig_gb(cfg, res), dpi), "ipfgb": _grab(P.fig_ipf_hagb(cfg, res), dpi),
         "gs_count": _grab(P.fig_grain_size_count(res, nb), dpi),
@@ -112,11 +112,12 @@ def add_ebsd_slides(prs, cfg: Config, res: MicroResult):
 def add_odf_slides(prs, cfg: Config, res: MicroResult, odf: ODFResult):
     dpi = cfg.fig_dpi
     figs = {"sections": _grab(P.fig_odf_sections(cfg, odf), dpi), "fibers": _grab(P.fig_fibers(odf), dpi)}
+    _engine = "kernel (direct)" if cfg.odf_method == "kernel" else f"harmonic L={cfg.harmonic_lmax}"
     _title_slide(prs, "Crystallographic Texture (ODF)",
-                 f"DP590 {cfg.lattice} ferrite  -  GSH L_max={cfg.l_max}  -  {len(odf.eulers_odf):,} orientations",
+                 f"{cfg.lattice} - {_engine}, hw={cfg.odf_halfwidth:g}deg  -  {len(odf.eulers_odf):,} orientations",
                  [(f"{odf.J:.2f}", "Texture index J"), (f"{odf.odf.max():.2f}", "ODF max [mrd]"),
                   (f"{odf.f_alpha.max():.2f}", "alpha-fiber max [mrd]"), (f"{odf.f_gamma.max():.2f}", "gamma-fiber max [mrd]"),
-                  (f"{len(odf.n_states)}", "GSH modes"), (f"L={cfg.l_max}", "Bandwidth")])
+                  (f"{cfg.odf_halfwidth:g}deg", "Kernel halfwidth"), (cfg.sample_sym, "Sample sym")])
     s = prs.slides.add_slide(prs.slide_layouts[6]); _heading(s, "ODF - phi2 Sections")
     _fit(s, figs["sections"], Inches(0.55), Inches(1.15), Inches(12.2), Inches(5.4))
     _par(_tbx(s, Inches(0.55), Inches(6.7), Inches(12.2), Inches(0.5)).paragraphs[0],

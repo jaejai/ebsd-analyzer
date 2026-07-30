@@ -17,6 +17,43 @@ SECTION = "#aab8c9"        # section headers (brighter than before)
 MUTED = "#9aa7b8"
 MAIN_BG = "#eef0f3"
 
+# ---------------------------------------------------------------------------
+# Spin-button / combo arrow glyphs.
+# Qt's CSS border-triangle trick is unreliable on sub-control arrows (it often
+# renders up and down identically or falls back to a native glyph). Drawing the
+# glyphs as real SVG images is reliable, so we write tiny SVGs to a temp dir at
+# import time and reference them by path in the stylesheet. Spin steppers use
+# clear "+" / "-" marks; the combo uses a down chevron.
+# ---------------------------------------------------------------------------
+import os as _os
+import tempfile as _tempfile
+
+_GLYPH_DIR = _os.path.join(_tempfile.gettempdir(), "ebsd_ui_glyphs")
+_os.makedirs(_GLYPH_DIR, exist_ok=True)
+
+
+def _write_svg(name, body):
+    p = _os.path.join(_GLYPH_DIR, name)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(body)
+    return p.replace("\\", "/")   # Qt url() wants forward slashes
+
+
+_DARK = "#101821"
+# bold "+" and "-" (minus) glyphs, chunky enough to read at ~11px
+_PLUS = f'''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+<rect x="6.5" y="2" width="3" height="12" rx="1.5" fill="{_DARK}"/>
+<rect x="2" y="6.5" width="12" height="3" rx="1.5" fill="{_DARK}"/></svg>'''
+_MINUS = f'''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+<rect x="2" y="6.5" width="12" height="3" rx="1.5" fill="{_DARK}"/></svg>'''
+_CHEVRON = f'''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+<path d="M3 5.5 L8 10.5 L13 5.5" stroke="{_DARK}" stroke-width="2.6" fill="none"
+stroke-linecap="round" stroke-linejoin="round"/></svg>'''
+
+UP_ARROW = _write_svg("plus.svg", _PLUS)     # spin up  -> "+"
+DOWN_ARROW = _write_svg("minus.svg", _MINUS)  # spin down -> "-"
+CHEVRON = _write_svg("chevron.svg", _CHEVRON)
+
 STYLESHEET = f"""
 * {{ font-family: 'Segoe UI', sans-serif; font-size: 12px; }}
 
@@ -69,14 +106,36 @@ QMainWindow, QWidget {{ background: {MAIN_BG}; color: #1a2230; }}
 }}
 #ParamScroll QLineEdit:focus, #ParamScroll QComboBox:focus,
 #ParamScroll QSpinBox:focus, #ParamScroll QDoubleSpinBox:focus {{ border: 1px solid {ACCENT}; }}
-#ParamScroll QComboBox::drop-down {{ border: none; width: 22px; }}
+#ParamScroll QComboBox::drop-down {{ border: none; width: 22px;
+    background: #c4d0e0; border-top-right-radius: 5px; border-bottom-right-radius: 5px; }}
+#ParamScroll QComboBox::drop-down:hover {{ background: {ACCENT}; }}
+#ParamScroll QComboBox::down-arrow {{ image: url("{CHEVRON}"); width: 11px; height: 11px; }}
 #ParamScroll QComboBox QAbstractItemView {{
     background: #222e3c; color: {TEXT}; border: 1px solid {PANEL_BORDER};
     selection-background-color: {ACCENT}; selection-color: white;
 }}
-#ParamScroll QSpinBox::up-button, #ParamScroll QSpinBox::down-button,
-#ParamScroll QDoubleSpinBox::up-button, #ParamScroll QDoubleSpinBox::down-button {{
-    width: 16px; background: #344252; border: none;
+/* Spin buttons: up-button pinned to the top-right, down-button to the bottom-
+   right, each carrying a DISTINCT arrow glyph drawn as an SVG image (border-
+   triangle CSS is unreliable on Qt sub-controls and renders both arrows the
+   same — an image always renders the intended up vs down shape). */
+#ParamScroll QSpinBox, #ParamScroll QDoubleSpinBox {{ padding-right: 22px; min-height: 30px; }}
+#ParamScroll QSpinBox::up-button, #ParamScroll QDoubleSpinBox::up-button {{
+    subcontrol-origin: border; subcontrol-position: top right;
+    width: 20px; height: 15px; background: #c4d0e0; border: none;
+    border-top-right-radius: 5px;
+}}
+#ParamScroll QSpinBox::down-button, #ParamScroll QDoubleSpinBox::down-button {{
+    subcontrol-origin: border; subcontrol-position: bottom right;
+    width: 20px; height: 15px; background: #b6c2d3; border: none;
+    border-bottom-right-radius: 5px;
+}}
+#ParamScroll QSpinBox::up-button:hover, #ParamScroll QDoubleSpinBox::up-button:hover,
+#ParamScroll QSpinBox::down-button:hover, #ParamScroll QDoubleSpinBox::down-button:hover {{ background: {ACCENT}; }}
+#ParamScroll QSpinBox::up-arrow, #ParamScroll QDoubleSpinBox::up-arrow {{
+    image: url("{UP_ARROW}"); width: 12px; height: 12px;
+}}
+#ParamScroll QSpinBox::down-arrow, #ParamScroll QDoubleSpinBox::down-arrow {{
+    image: url("{DOWN_ARROW}"); width: 12px; height: 12px;
 }}
 #ParamScroll QCheckBox {{ color: {LABEL}; font-size: 12px; spacing: 7px; }}
 #ParamScroll QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {PANEL_BORDER};
@@ -150,10 +209,14 @@ QPushButton#BrowseBtn:hover {{ background: #516882; border: 1px solid {ACCENT}; 
 #NextBtn:hover {{ background: {ACCENT_HOVER}; }}
 #StageCount {{ font-family: Consolas, monospace; font-size: 11px; color: #7a8696; }}
 
-QScrollBar:vertical {{ background: transparent; width: 11px; margin: 2px; }}
-QScrollBar::handle:vertical {{ background: #aeb7c3; border-radius: 5px; min-height: 30px; }}
-QScrollBar::handle:vertical:hover {{ background: #97a3b2; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
-QScrollBar:horizontal {{ background: transparent; height: 11px; margin: 2px; }}
-QScrollBar::handle:horizontal {{ background: #aeb7c3; border-radius: 5px; min-width: 30px; }}
+/* Scrollbars: a visible track + a high-contrast handle so they read clearly on
+   BOTH the dark sidebar and the light work area. Arrow step-buttons kept off. */
+QScrollBar:vertical {{ background: rgba(120,135,155,0.18); width: 13px; margin: 2px; border-radius: 6px; }}
+QScrollBar::handle:vertical {{ background: #8794a6; border: 1px solid #6b7787; border-radius: 6px; min-height: 34px; }}
+QScrollBar::handle:vertical:hover {{ background: {ACCENT}; border: 1px solid {ACCENT}; }}
+QScrollBar:horizontal {{ background: rgba(120,135,155,0.18); height: 13px; margin: 2px; border-radius: 6px; }}
+QScrollBar::handle:horizontal {{ background: #8794a6; border: 1px solid #6b7787; border-radius: 6px; min-width: 34px; }}
+QScrollBar::handle:horizontal:hover {{ background: {ACCENT}; border: 1px solid {ACCENT}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; background: none; border: none; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 """

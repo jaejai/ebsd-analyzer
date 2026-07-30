@@ -200,3 +200,268 @@ class ChipButton(QPushButton):
     def __init__(self, text, checked=True):
         super().__init__(text); self.setObjectName("ChipBtn")
         self.setCheckable(True); self.setChecked(checked)
+
+
+# Height of one boundary-editor row. The themed spin boxes are min-height 30 px
+# and carry stacked +/- buttons, so rows need headroom or the values render
+# clipped / rows overlap.
+_ROW_H = 46
+
+# Chrome the themed stylesheet puts around a spin box's text:
+#   padding-right: 22 px  (reserved for the stacked +/- buttons)
+#   padding: 7px 10px     (left/right text padding)
+# plus a small frame allowance. Numeric fields must be at least
+# text_width + _SPIN_CHROME wide or the value renders clipped.
+_SPIN_CHROME = 22 + 10 + 10 + 6
+
+# Extra slack so the caret and the last glyph never touch the field edge.
+_SPIN_SLACK = 12
+
+
+def _fit_spinbox(sp, widest_text):
+    """Give a spin box the width its widest value actually needs.
+
+    The themed stylesheet reserves a sizeable but not-known-in-advance amount of
+    the widget for the stacked +/- buttons and text padding. Rather than assume
+    a constant (an assumption that kept clipping the values), MEASURE the real
+    chrome as `widget width - lineEdit width` once the widget is laid out, then
+    demand text_width + that chrome. Falls back to the constant before the first
+    layout pass, and is re-applied by `polish_widths()` afterwards.
+    """
+    text_px = sp.fontMetrics().horizontalAdvance(widest_text)
+    chrome = sp.width() - sp.lineEdit().width() if sp.lineEdit().width() else 0
+    if chrome <= 0:
+        chrome = _SPIN_CHROME
+    sp.setMinimumWidth(text_px + chrome + _SPIN_SLACK)
+    sp._widest_text = widest_text          # remembered for polish_widths()
+    return sp
+
+
+class BoundaryEditor(QWidget):
+    """Editable list of grain-boundary classes. The user sets how many boundaries
+    to define; each row has a min/max angle, a colour and a line thickness. The
+    grain-defining threshold is the highest row's min angle.
+
+    .value() -> list of {"name","lo","hi","color","width"} dicts.
+    """
+    _PALETTE = ["blue", "black", "red", "green", "magenta", "orange"]
+
+    def __init__(self, defaults=None):
+        super().__init__()
+        from PySide6.QtWidgets import (QSpinBox, QDoubleSpinBox, QComboBox,
+                                       QGridLayout, QLabel)
+        self._QDoubleSpinBox = QDoubleSpinBox
+        self._QComboBox = QComboBox
+        self._QLabel = QLabel
+        self._rows = []
+        self.v = QVBoxLayout(self); self.v.setContentsMargins(0, 0, 0, 0); self.v.setSpacing(6)
+
+        # count selector row
+        cnt_row = QHBoxLayout(); cnt_row.setSpacing(6)
+        lab = QLabel("Boundaries:"); lab.setStyleSheet(PARAM_LABEL_CSS)
+        self.count = QSpinBox(); self.count.setRange(1, 6)
+        self.count.setValue(len(defaults) if defaults else 2)
+        self.count.setMinimumWidth(74)
+        cnt_row.addWidget(lab); cnt_row.addWidget(self.count); cnt_row.addStretch(1)
+        cw = QWidget(); cw.setLayout(cnt_row); self.v.addWidget(cw)
+        self._count_row = cw
+
+        # convention hint — what lo/hi mean
+        hint = QLabel("display classes, drawn where  lo° ≤ misorientation < hi°   ·   "
+                      "grains split at the angle set above")
+        hint.setStyleSheet("color:#9fb0c4; font-size:10px; font-style:italic;"
+                           "background:transparent; padding:1px 0 3px;")
+        hint.setWordWrap(True)
+        hint.setMinimumHeight(26)
+        self.v.addWidget(hint)
+        self._hint = hint
+
+        self._defaults = defaults or [
+            {"name": "LAGB", "lo": 2.0, "hi": 15.0, "color": "blue", "width": 0.4},
+            {"name": "HAGB", "lo": 15.0, "hi": 180.0, "color": "black", "width": 0.6},
+        ]
+        # rows live inside a replaceable host widget so a rebuild simply swaps the
+        # whole host (no per-widget deleteLater timing hazards).
+        self._host = None
+        self._rebuild()
+        self.count.valueChanged.connect(self._rebuild)
+
+    def _rebuild(self):
+        from PySide6.QtWidgets import (QLineEdit, QDoubleSpinBox, QComboBox,
+                                       QLabel, QGridLayout)
+        # replace the entire rows host
+        if self._host is not None:
+            self.v.removeWidget(self._host)
+            self._host.setParent(None)
+            self._host.deleteLater()
+        self._rows = []
+        host = QWidget()
+        # Compact chrome for THIS table only: five themed columns cannot fit the
+        # sidebar at the default padding, and squeezing a column is what clipped
+        # the values. Narrower spin buttons + tighter text padding buy the room.
+        host.setStyleSheet(
+            "QDoubleSpinBox, QLineEdit, QComboBox { padding: 4px 5px; }"
+            "QDoubleSpinBox { padding-right: 17px; }"
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 15px; }"
+            "QComboBox { padding-right: 20px; }"
+            "QComboBox::drop-down { width: 18px; }")
+        grid = QGridLayout(host)
+        grid.setHorizontalSpacing(4); grid.setVerticalSpacing(7)
+        # small margins so neither the header labels nor the last column sit
+        # flush against the panel edge (the "name" header was being cut off)
+        grid.setContentsMargins(3, 0, 6, 0)
+        for c, h in enumerate(["name", "from lo°", "to hi°", "colour", "width"]):
+            hl = QLabel(h); hl.setStyleSheet(
+                "color:#9fb0c4;font-size:10px;font-weight:700;background:transparent;")
+            grid.addWidget(hl, 0, c)
+        # Only the name column may stretch/absorb slack. The four value columns
+        # are pinned to their content width (set below) so the layout can never
+        # squeeze a number until it clips.
+        grid.setColumnStretch(0, 1)
+        for c in (1, 2, 3, 4):
+            grid.setColumnStretch(c, 0)
+        n = self.count.value()
+        for i in range(n):
+            d = self._defaults[i] if i < len(self._defaults) else {
+                "name": f"B{i+1}", "lo": 15.0 * i + 2.0, "hi": 180.0,
+                "color": self._PALETTE[i % len(self._PALETTE)], "width": 0.5}
+            # Min widths sized so the VALUE stays readable next to the +/- spin
+            # buttons (which take ~22 px on the right of every spin box).
+            name = QLineEdit(d["name"])
+            # Sized from real font metrics like the numeric fields — a hard-coded
+            # 44 px clipped "LAGB"/"HAGB" to "\GB". Same formula polish_widths()
+            # uses, so the deferred pass never disagrees with the initial build.
+            _w = max(d["name"], "HAGB", key=len)
+            name.setMinimumWidth(name.fontMetrics().horizontalAdvance(_w + "_") + 16)
+            lo = QDoubleSpinBox(); lo.setRange(0, 180); lo.setDecimals(0); lo.setValue(d["lo"])
+            lo.setSuffix("°")
+            hi = QDoubleSpinBox(); hi.setRange(0, 181); hi.setDecimals(0); hi.setValue(d["hi"])
+            hi.setSuffix("°")
+            col = QComboBox(); col.addItems(self._PALETTE)
+            col.setCurrentText(d["color"] if d["color"] in self._PALETTE else "black")
+            # width of the longest palette entry ("magenta") + drop-down + padding,
+            # measured — a fixed 88 px rendered it as "magent".
+            _widest = max(self._PALETTE,
+                          key=lambda s: col.fontMetrics().horizontalAdvance(s))
+            col.setMinimumWidth(col.fontMetrics().horizontalAdvance(_widest) + 64)
+            wd = QDoubleSpinBox(); wd.setRange(0.1, 6.0); wd.setDecimals(1); wd.setSingleStep(0.1)
+            wd.setValue(d["width"])
+            # Size the numeric fields from REAL font metrics for their widest
+            # possible value, plus the space the themed stylesheet takes for the
+            # +/- spin buttons and the text padding. Hard-coded widths were what
+            # clipped the numbers before.
+            for sp, widest in ((lo, "180°"), (hi, "180°"), (wd, "6.0")):
+                _fit_spinbox(sp, widest)
+            # Pin the grid columns to those widths too. A minimum on the widget
+            # alone is not enough: the layout will still squeeze a column when
+            # the row is wider than the panel, which is what clipped the values.
+            for c, w in ((0, name.minimumWidth()), (1, lo.minimumWidth()),
+                         (2, hi.minimumWidth()), (3, col.minimumWidth()),
+                         (4, wd.minimumWidth())):
+                grid.setColumnMinimumWidth(c, max(grid.columnMinimumWidth(c), w))
+            row = {"name": name, "lo": lo, "hi": hi, "color": col, "width": wd}
+            # Fixed row height: without it a squeezing parent layout crushes the
+            # rows and the numbers get clipped in half.
+            for w in row.values():
+                # Do NOT force a height here: the themed spin boxes need their
+                # natural height (min-height 30 px + padding + stacked +/-
+                # buttons). Forcing a smaller one makes rows overlap and clips
+                # the values. Just stop them stretching vertically.
+                w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+                w.setMinimumHeight(_ROW_H)
+            for c, key in enumerate(["name", "lo", "hi", "color", "width"]):
+                grid.addWidget(row[key], i + 1, c)
+            self._rows.append(row)
+        self._host = host
+        self.v.addWidget(host)
+        # Reserve the vertical space the grid needs, computed EXPLICITLY (a
+        # sizeHint taken here is stale — the themed spin boxes have not been
+        # sized yet, which left the host too short and overlapped the rows).
+        HEADER_H = 16
+        VSPACE = 7
+        rows_h = HEADER_H + VSPACE + n * (_ROW_H + VSPACE) + 4
+        host.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        host.setFixedHeight(rows_h)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # Height of the whole editor = the rows host plus everything stacked
+        # above it (count row + hint) plus the layout spacing between them.
+        # Measured, not guessed — an under-estimate clipped the last row.
+        if getattr(self, "_hint", None) is not None:
+            above = (self._count_row.sizeHint().height()
+                     + self._hint.sizeHint().height()
+                     + self.v.spacing() * 2)
+        else:                       # first build, before the header widgets exist
+            above = 96
+        self.setFixedHeight(rows_h + above + 8)
+        # Re-measure once Qt has laid the widgets out and the real stylesheet
+        # chrome is known (see polish_widths).
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self.polish_widths)
+
+    def polish_widths(self):
+        """Re-size the numeric fields once real geometry exists.
+
+        Before the first layout pass a spin box cannot report how much space its
+        stylesheet chrome (the +/- buttons and padding) takes, so the initial
+        sizing uses an estimate. This runs afterwards, measures the true chrome,
+        and pins both the widgets and the grid columns to it — this is what
+        finally stops the angle / width values being clipped.
+        """
+        if not self._rows or self._host is None:
+            return
+        grid = self._host.layout()
+        # numeric spin columns: text + the spin box's real chrome
+        for c, key in {1: "lo", 2: "hi", 4: "width"}.items():
+            need = 0
+            for r in self._rows:
+                sp = r[key]
+                widest = getattr(sp, "_widest_text", sp.text())
+                chrome = sp.width() - sp.lineEdit().width()
+                if chrome <= 0:
+                    chrome = _SPIN_CHROME
+                need = max(need, sp.fontMetrics().horizontalAdvance(widest)
+                           + chrome + _SPIN_SLACK)
+            for r in self._rows:
+                r[key].setMinimumWidth(need)
+            grid.setColumnMinimumWidth(c, need)
+
+        # name column: must hold the longest label the user has typed (and at
+        # least "HAGB"), or it renders clipped like "\GB".
+        need = 0
+        for r in self._rows:
+            le = r["name"]
+            widest = max(le.text(), "HAGB", key=len)
+            need = max(need, le.fontMetrics().horizontalAdvance(widest + "_") + 16)
+        for r in self._rows:
+            r["name"].setMinimumWidth(need)
+        grid.setColumnMinimumWidth(0, need)
+
+        # colour column: sized for the longest palette entry ("magenta"), plus
+        # the drop-down arrow and padding — otherwise it renders as "magent".
+        if self._rows:
+            cb0 = self._rows[0]["color"]
+            widest = max(self._PALETTE, key=lambda s: cb0.fontMetrics().horizontalAdvance(s))
+            need = cb0.fontMetrics().horizontalAdvance(widest) + 64
+            for r in self._rows:
+                r["color"].setMinimumWidth(need)
+            grid.setColumnMinimumWidth(3, need)
+
+    def value(self):
+        out = []
+        for r in self._rows:
+            out.append({"name": r["name"].text() or "bnd",
+                        "lo": r["lo"].value(), "hi": r["hi"].value(),
+                        "color": r["color"].currentText(),
+                        "width": r["width"].value()})
+        return out
+
+    def set_value(self, boundaries):
+        """Restore rows from a list of boundary dicts (used by JSON presets)."""
+        if not boundaries:
+            return
+        self._defaults = [dict(b) for b in boundaries]
+        n = max(1, min(len(self._defaults), self.count.maximum()))
+        if self.count.value() == n:
+            self._rebuild()            # same count -> refresh values in place
+        else:
+            self.count.setValue(n)     # triggers _rebuild via valueChanged

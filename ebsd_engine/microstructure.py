@@ -36,12 +36,19 @@ class MicroResult:
     ci_raw: np.ndarray = None         # CI before any clean-up (for display masking)
     n_filled: int = 0                 # low-CI pixels replaced by neighbour-fill
     rgb_map: np.ndarray = None
+    # phases (MTEX-style multiphase); single-phase scans -> one entry
+    phases: list = field(default_factory=list)   # ordered dicts: id,name,sym,pg,lattice,kind
+    dominant_pid: int = 0             # phase id with the most valid pixels
+    pid2phase: dict = field(default_factory=dict)
     # misorientation
     mis_h: np.ndarray = None
     mis_v: np.ndarray = None
     # boundaries
     hagb_segs: list = field(default_factory=list)
     lagb_segs: list = field(default_factory=list)
+    # per-boundary-class segments, aligned with cfg.boundaries; each entry is
+    # {"name","color","width","segs":[...]}. Drives the configurable boundary maps.
+    boundary_segs: list = field(default_factory=list)
     # grains
     labels_clean: np.ndarray = None
     colors: np.ndarray = None
@@ -61,15 +68,32 @@ class MicroResult:
 
 
 # ============================================================================
-# §2 — Load .ang & hex->square
+# §2 — Load scan (multi-format) & hex->square + build phases
 # ============================================================================
-def load_ang(cfg: Config, log=print) -> MicroResult:
+def load_scan(cfg: Config, log=print) -> MicroResult:
     from scipy.spatial import cKDTree
+    from orix.crystal_map import Phase
 
-    cc = cfg.comment_char
-    raw = np.loadtxt(
-        [l for l in open(cfg.ang_file) if not l.strip().startswith(cc) and l.strip()])
-    log(f"Loaded {raw.shape[0]:,} pts x {raw.shape[1]} cols")
+    from .ebsd_read import read_ebsd, lattice_kind
+
+    raw, meta = read_ebsd(cfg.input_file)
+    log(f"[{meta['format']}] Loaded {raw.shape[0]:,} pts x {raw.shape[1]} cols")
+
+    # Crystal symmetry: auto-detect from the file unless set manually in cfg.
+    # If auto is requested but the file carries none, fall back to m-3m + warn.
+    _sym_file = meta.get("crystal_sym")
+    if cfg.crystal_sym is None:
+        if _sym_file is None:
+            cfg.crystal_sym = "m-3m"
+            log("WARNING: no crystal symmetry found in the file; defaulting to "
+                "m-3m (cubic). Set it manually in Step 2 if this is wrong.")
+        else:
+            cfg.crystal_sym = _sym_file
+            log(f"crystal_sym auto-detected from file: {cfg.crystal_sym}")
+    elif _sym_file is not None and _sym_file != cfg.crystal_sym:
+        log(f"NOTE: manual crystal_sym={cfg.crystal_sym} overrides file value {_sym_file}")
+    else:
+        log(f"crystal_sym = {cfg.crystal_sym} (manual)")
 
     x_hex, y_hex = raw[:, cfg.col_x], raw[:, cfg.col_y]
     y_uniq = np.unique(np.round(y_hex, 6))
@@ -101,7 +125,58 @@ def load_ang(cfg: Config, log=print) -> MicroResult:
 
     # keep the raw (pre-fill) CI for display masking decisions
     res.ci_raw = res.ci.copy()
+
+    # --- Phases present in this scan (MTEX-style multiphase) -----------------
+    # Ordered list of the phases actually present in the data, each with its own
+    # crystal point group. Single-phase scans -> one entry (mirrors notebook
+    # loader cell 11a31d99).
+    def _pg_for(pg_str):
+        return Phase(name="x", point_group=pg_str).point_group
+
+    meta_phases = meta.get("phases") or []
+    present = [int(v) for v in np.unique(res.phase.ravel())]   # ids in the data
+    phases = []
+    for ph in meta_phases:
+        if ph["id"] not in present:
+            continue
+        sym = ph["point_group"]
+        if sym is None:                    # this phase had no symmetry in header
+            sym = cfg.crystal_sym or _sym_file or "m-3m"
+            log(f"WARNING: phase {ph['id']} ({ph.get('name') or '?'}) has no "
+                f"symmetry in the file; using {sym} for it.")
+        phases.append({
+            "id": ph["id"],
+            "name": ph["name"] or f"phase{ph['id']}",
+            "sym": sym,
+            "pg": _pg_for(sym),
+            "lattice": ph.get("lattice"),
+            "kind": lattice_kind(ph.get("lattice"), ph["name"] or ""),
+        })
+    # fallback if the header carried no phase blocks: one phase per present id
+    if not phases:
+        sym = cfg.crystal_sym or _sym_file or "m-3m"
+        for pid in present:
+            phases.append({"id": int(pid), "name": f"phase{pid}", "sym": sym,
+                           "pg": _pg_for(sym), "lattice": None,
+                           "kind": cfg.lattice.upper()})
+
+    counts = {p["id"]: int((res.phase.ravel() == p["id"]).sum()) for p in phases}
+    res.phases = phases
+    res.dominant_pid = max(counts, key=counts.get)
+    res.pid2phase = {p["id"]: p for p in phases}
+
+    log("Phases present: " + ", ".join(
+        f"{p['name']}(id={p['id']},{p['sym']},{p['kind']})" for p in phases))
+    log(f"Dominant phase id = {res.dominant_pid}")
+    if len(phases) > 1:
+        log(f"MULTIPHASE scan: {len(phases)} phases -> per-phase misorientation, "
+            f"IPF, grains (phase boundaries split grains) and a separate ODF each.")
     return res
+
+
+# backward-compat alias for the old single-format name
+def load_ang(cfg: Config, log=print) -> MicroResult:
+    return load_scan(cfg, log)
 
 
 # ============================================================================
@@ -171,20 +246,46 @@ def compute_misorientation(cfg: Config, res: MicroResult, log=print):
     from orix.quaternion import Orientation
     from orix.crystal_map import Phase
 
-    pg = Phase(name="Ferrite", point_group=cfg.crystal_sym).point_group
+    # Per-phase orientations + misorientation. Neighbour pairs are only meaningful
+    # within the SAME phase (you cannot compare a BCC orientation to an FCC one),
+    # so cross-phase neighbours get misorientation = +inf and thus act as
+    # boundaries (they never link grains and draw as boundaries) -- exactly how
+    # MTEX treats phase boundaries. Mirrors notebook cell 11fdc96a.
     ny, nx = res.ny, res.nx
-    ori = Orientation.from_euler(res.euler, symmetry=pg).reshape(ny, nx)
-    qdata = ori.data
+    dom_pg = res.pid2phase[res.dominant_pid]["pg"]
+    ori = Orientation.from_euler(res.euler, symmetry=dom_pg).reshape(ny, nx)
+    qdata = ori.data                    # raw quaternions (symmetry only tags frame)
+    phase_grid = res.phase.reshape(ny, nx)
 
     t0 = time.time()
-    q_L = qdata[:, :-1, :].reshape(-1, 4); q_R = qdata[:, 1:, :].reshape(-1, 4)
-    res.mis_h = (Orientation(q_L, symmetry=pg).angle_with(Orientation(q_R, symmetry=pg), degrees=True)
-                 .reshape(ny, nx - 1))
-    q_T = qdata[:-1, :, :].reshape(-1, 4); q_B = qdata[1:, :, :].reshape(-1, 4)
-    res.mis_v = (Orientation(q_T, symmetry=pg).angle_with(Orientation(q_B, symmetry=pg), degrees=True)
-                 .reshape(ny - 1, nx))
-    log(f"Misorientation done in {time.time()-t0:.1f}s")
-    log(f"HAGB: H {np.mean(res.mis_h>=cfg.hagb_angle):.1%}  V {np.mean(res.mis_v>=cfg.hagb_angle):.1%}")
+    mis_h = np.full((ny, nx - 1), np.inf)
+    mis_v = np.full((ny - 1, nx), np.inf)
+
+    same_h = (phase_grid[:, :-1] == phase_grid[:, 1:])
+    same_v = (phase_grid[:-1, :] == phase_grid[1:, :])
+
+    for p in res.phases:
+        pg = p["pg"]; pid = p["id"]
+        hmask = same_h & (phase_grid[:, :-1] == pid)
+        if hmask.any():
+            qL = qdata[:, :-1, :][hmask]; qR = qdata[:, 1:, :][hmask]
+            mis_h[hmask] = Orientation(qL, symmetry=pg).angle_with(
+                Orientation(qR, symmetry=pg), degrees=True)
+        vmask = same_v & (phase_grid[:-1, :] == pid)
+        if vmask.any():
+            qT = qdata[:-1, :, :][vmask]; qB = qdata[1:, :, :][vmask]
+            mis_v[vmask] = Orientation(qT, symmetry=pg).angle_with(
+                Orientation(qB, symmetry=pg), degrees=True)
+
+    res.mis_h, res.mis_v = mis_h, mis_v
+    log(f"Per-phase misorientation done in {time.time()-t0:.1f}s")
+    finite_h = np.isfinite(mis_h); finite_v = np.isfinite(mis_v)
+    log(f"HAGB (valid same-phase pairs only): "
+        f"H {np.mean(mis_h[finite_h]>=cfg.hagb_angle):.1%}  "
+        f"V {np.mean(mis_v[finite_v]>=cfg.hagb_angle):.1%}")
+    if len(res.phases) > 1:
+        xh = int((~same_h).sum()); xv = int((~same_v).sum())
+        log(f"Phase-boundary links treated as grain boundaries: H {xh:,}  V {xv:,}")
 
 
 # ============================================================================
@@ -192,15 +293,23 @@ def compute_misorientation(cfg: Config, res: MicroResult, log=print):
 # ============================================================================
 def compute_ipf(cfg: Config, res: MicroResult, log=print):
     from orix.quaternion import Orientation
-    from orix.crystal_map import Phase
     from orix.plot import IPFColorKeyTSL
     from orix.vector import Vector3d
 
-    pg = Phase(name="Ferrite", point_group=cfg.crystal_sym).point_group
+    # IPF colouring is symmetry-dependent, so colour each phase with ITS OWN
+    # point group and composite into one map (MTEX-style multiphase IPF).
+    # Mirrors notebook cell 5075d2a8.
     ny, nx = res.ny, res.nx
-    ori_flat = Orientation.from_euler(res.euler, symmetry=pg)
-    ipf_key = IPFColorKeyTSL(pg, direction=Vector3d(list(cfg.ipf_dir)))
-    rgb = ipf_key.orientation2color(ori_flat).reshape(ny, nx, 3).copy()
+    rgb = np.zeros((ny * nx, 3))
+    phase_flat = res.phase.ravel()
+    for p in res.phases:
+        sel = phase_flat == p["id"]
+        if not sel.any():
+            continue
+        ori_p = Orientation.from_euler(res.euler[sel], symmetry=p["pg"])
+        key = IPFColorKeyTSL(p["pg"], direction=Vector3d(list(cfg.ipf_dir)))
+        rgb[sel] = key.orientation2color(ori_p)
+    rgb = rgb.reshape(ny, nx, 3).copy()
     if not cfg.ci_mask:
         # notebook behaviour: grey out sub-threshold CI pixels.
         rgb[res.ci < cfg.ci_threshold] = cfg.low_ci_fill
@@ -226,10 +335,34 @@ def make_segments(mis_h, mis_v, step, ny, nx, lagb, hagb):
     return hagb_s, lagb_s
 
 
+def _range_segments(mis_h, mis_v, step, lo, hi):
+    """Boundary segments for pairs whose misorientation is in [lo, hi) degrees."""
+    half = step / 2
+    segs = []
+    mh = (mis_h >= lo) & (mis_h < hi)
+    jj, ii = np.nonzero(mh)
+    xe = (ii + 1) * step - half; yc = jj * step
+    segs.extend([[(x, y - half), (x, y + half)] for x, y in zip(xe, yc)])
+    mv = (mis_v >= lo) & (mis_v < hi)
+    jj, ii = np.nonzero(mv)
+    ye = (jj + 1) * step - half; xc = ii * step
+    segs.extend([[(x - half, y), (x + half, y)] for x, y in zip(xc, ye)])
+    return segs
+
+
 def compute_boundaries(cfg: Config, res: MicroResult, log=print):
+    # per-boundary-class segments (configurable count / range / color / width)
+    res.boundary_segs = []
+    for b in cfg.boundaries:
+        segs = _range_segments(res.mis_h, res.mis_v, res.step, b["lo"], b["hi"])
+        res.boundary_segs.append({"name": b.get("name", ""),
+                                  "color": b.get("color", "black"),
+                                  "width": float(b.get("width", 0.5)),
+                                  "lo": b["lo"], "hi": b["hi"], "segs": segs})
+        log(f"{b.get('name','bnd')} [{b['lo']:.0f},{b['hi']:.0f}) segs: {len(segs):,}")
+    # back-compat: keep hagb_segs/lagb_segs populated from the classic thresholds
     res.hagb_segs, res.lagb_segs = make_segments(
         res.mis_h, res.mis_v, res.step, res.ny, res.nx, cfg.lagb_angle, cfg.hagb_angle)
-    log(f"HAGB segs: {len(res.hagb_segs):,}  LAGB segs: {len(res.lagb_segs):,}")
 
 
 # ============================================================================
@@ -255,19 +388,31 @@ class UnionFind:
 
 def _diag_misorientation(cfg, res):
     """Misorientation to the down-right and down-left diagonal neighbours,
-    computed lazily only when 8-connectivity is requested."""
+    computed lazily only when 8-connectivity is requested. Per-phase with
+    cross-phase pairs = +inf (phase boundaries), same pattern as
+    compute_misorientation."""
     from orix.quaternion import Orientation
-    from orix.crystal_map import Phase
-    pg = Phase(name="Ferrite", point_group=cfg.crystal_sym).point_group
     ny, nx = res.ny, res.nx
-    ori = Orientation.from_euler(res.euler, symmetry=pg).reshape(ny, nx)
-    q = ori.data
-    # down-right: (j,i) vs (j+1,i+1)
-    a = q[:-1, :-1, :].reshape(-1, 4); b = q[1:, 1:, :].reshape(-1, 4)
-    mis_dr = Orientation(a, symmetry=pg).angle_with(Orientation(b, symmetry=pg), degrees=True).reshape(ny - 1, nx - 1)
-    # down-left: (j,i) vs (j+1,i-1)
-    a = q[:-1, 1:, :].reshape(-1, 4); b = q[1:, :-1, :].reshape(-1, 4)
-    mis_dl = Orientation(a, symmetry=pg).angle_with(Orientation(b, symmetry=pg), degrees=True).reshape(ny - 1, nx - 1)
+    dom_pg = res.pid2phase[res.dominant_pid]["pg"]
+    q = Orientation.from_euler(res.euler, symmetry=dom_pg).reshape(ny, nx).data
+    ph = res.phase.reshape(ny, nx)
+
+    mis_dr = np.full((ny - 1, nx - 1), np.inf)   # (j,i) vs (j+1,i+1)
+    mis_dl = np.full((ny - 1, nx - 1), np.inf)   # (j,i) vs (j+1,i-1)
+    same_dr = (ph[:-1, :-1] == ph[1:, 1:])
+    same_dl = (ph[:-1, 1:] == ph[1:, :-1])
+    for p in res.phases:
+        pg = p["pg"]; pid = p["id"]
+        m = same_dr & (ph[:-1, :-1] == pid)
+        if m.any():
+            a = q[:-1, :-1, :][m]; b = q[1:, 1:, :][m]
+            mis_dr[m] = Orientation(a, symmetry=pg).angle_with(
+                Orientation(b, symmetry=pg), degrees=True)
+        m = same_dl & (ph[:-1, 1:] == pid)
+        if m.any():
+            a = q[:-1, 1:, :][m]; b = q[1:, :-1, :][m]
+            mis_dl[m] = Orientation(a, symmetry=pg).angle_with(
+                Orientation(b, symmetry=pg), degrees=True)
     return mis_dr, mis_dl
 
 
@@ -356,7 +501,7 @@ def grain_size(cfg: Config, res: MicroResult, log=print):
 # Orchestration
 # ============================================================================
 def run_microstructure(cfg: Config, log=print) -> MicroResult:
-    res = load_ang(cfg, log)
+    res = load_scan(cfg, log)
     if cfg.ci_mask:
         neighbor_fill_low_ci(cfg, res, log)   # clean low-CI noise before analysis
     compute_misorientation(cfg, res, log)

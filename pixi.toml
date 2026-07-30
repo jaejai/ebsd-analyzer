@@ -28,3 +28,7 @@ orix = "0.14.*"
 python-pptx = "1.0.*"
 pillow = "12.1.*"
 pyside6 = "6.11.*"
+# ODF texture engines: "kernel" needs only orix; "harmonic" (MTEX Wigner-D
+# algorithm) needs these two (pure-python + numba, conda-forge).
+quaternionic = "1.0.*"
+spherical = "1.1.*"
