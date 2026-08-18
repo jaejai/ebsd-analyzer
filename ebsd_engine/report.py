@@ -1,4 +1,4 @@
-"""PowerPoint report builder — ports notebook section §13.
+"""PowerPoint report builder.
 
 Captures figures (from plotting.py) in memory and assembles a styled deck.
 REPORT mode: "all" | "ebsd" | "odf".
@@ -84,7 +84,7 @@ def add_ebsd_slides(prs, cfg: Config, res: MicroResult):
         "gs_frac": _grab(P.fig_grain_size_frac(res, nb), dpi),
     }
     _title_slide(prs, "EBSD Microstructure Analysis",
-                 f"DP590 dual-phase steel  -  {cfg.crystal_sym}  -  {res.nx}x{res.ny} @ {res.step:.3f} um/px",
+                 f"{cfg.crystal_sym}  -  {res.nx}x{res.ny} @ {res.step:.3f} um/px",
                  [(f"{res.n_grains}", f"Grains (>= {cfg.min_grain_px} px)"), (f"{res.G_e2627:.1f}", "ASTM E2627 G"),
                   (f"{res.d_num:.2f} um", "Number-avg. dia."), (f"{res.d_w:.2f} um", "Area-weighted dia."),
                   (f"{res.g_area_um2.mean():.2f} um2", "Mean grain area"), (f"{cfg.hagb_angle:.0f}deg", "HAGB threshold")])

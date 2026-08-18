@@ -1,6 +1,6 @@
 """Background worker — runs pipeline stages off the GUI thread.
 
-The 5 mockup stages map onto the engine like this:
+The 5 pipeline stages map onto the engine like this:
   1 Load        -> load_ang (hex->square)
   2 Microstructure -> misorientation, IPF, boundaries, grain segmentation
   3 Grain Size  -> ASTM E2627 stats
@@ -20,7 +20,7 @@ from ebsd_engine import microstructure as M
 from ebsd_engine import odf as O
 
 
-# stage indices (1-based, matching the mockup)
+# stage indices (1-based)
 STAGE_LOAD = 1
 STAGE_MICRO = 2
 STAGE_GRAINSIZE = 3

@@ -1,4 +1,4 @@
-"""Per-step parameter panels and result panes, faithful to the .dc.html mockup.
+"""Per-step parameter panels and result panes.
 
 Each step has:
   - build_step_controls(win, n) -> (page_widget, ctrls_dict)
@@ -77,8 +77,7 @@ def build_step_controls(win, n):
         def pick():
             import os
             from app import ROOT
-            sd = os.path.join(ROOT, "dp_data")
-            sd = sd if os.path.isdir(sd) else ROOT
+            sd = ROOT
             # Every format the reader supports, with an "all EBSD files" default
             # so users are not limited to .ang.
             filt = ("EBSD scan files (*.ang *.osc *.ctf *.h5 *.oh5 *.hdf5 *.hdf *.dream3d);;"
@@ -211,7 +210,7 @@ def build_step_controls(win, n):
         ctrls["lattice"] = SegGroup([("BCC", "BCC"), ("FCC", "FCC")], default=d.lattice)
         lay.addWidget(_row("Lattice / reference set", ctrls["lattice"]))
         ctrls["odf_method"] = SegGroup([("kernel", "kernel"), ("harmonic", "harmonic")], default=d.odf_method)
-        lay.addWidget(_row("ODF method (MTEX-style kernel)", ctrls["odf_method"]))
+        lay.addWidget(_row("ODF method (kernel)", ctrls["odf_method"]))
         ctrls["sample_sym"] = SegGroup([("triclinic", "tricl."), ("monoclinic", "monocl."), ("orthorhombic", "ortho.")], default=d.sample_sym)
         lay.addWidget(_row("Specimen symmetry", ctrls["sample_sym"]))
         ctrls["odf_halfwidth"] = _dsb(2, 30, d.odf_halfwidth, 1, 1)

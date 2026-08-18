@@ -1,4 +1,4 @@
-"""Figure builders — ports the plotting from notebook sections §4–§12.
+"""Figure builders.
 
 Every function returns a matplotlib Figure so it can be (a) embedded in the Qt
 canvas, or (b) grabbed as PNG bytes for the PowerPoint report. No plt.show().

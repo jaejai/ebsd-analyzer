@@ -28,7 +28,7 @@ if os.path.isdir(_lib_bin):
 
 # heavy scientific deps that PyInstaller commonly under-collects.
 # spherical + quaternionic + spinsfast power the "harmonic" ODF method
-# (MTEX Wigner-D algorithm); they use numba, so collect fully.
+# (Wigner-D algorithm); they use numba, so collect fully.
 for pkg in ("orix", "diffpy", "matplotlib", "scipy", "pptx", "numba", "llvmlite",
             "pooch", "spherical", "quaternionic", "spinsfast"):
     try:
@@ -39,7 +39,7 @@ for pkg in ("orix", "diffpy", "matplotlib", "scipy", "pptx", "numba", "llvmlite"
 
 # ODF harmonic engine (local module bundled with the app). spinsfast is an
 # optional spherical backend (not present/needed on Windows) — not forced here.
-hiddenimports += ["ebsd_engine.odf_mtex", "spherical", "quaternionic"]
+hiddenimports += ["ebsd_engine.odf_harmonic", "spherical", "quaternionic"]
 hiddenimports += collect_submodules("orix")
 hiddenimports += [
     "scipy.special._cdflib",

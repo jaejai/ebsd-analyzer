@@ -1,11 +1,7 @@
-"""Loading + microstructure analysis — ports notebook sections §2–§9.
+"""Loading + microstructure analysis.
 
 Hex->square resampling, orientations & misorientations, IQ/CI/IPF maps,
 grain-boundary segments, union-find grain segmentation, ASTM E2627 grain size.
-
-All numeric logic is copied verbatim from EBSD_ODF_combined.ipynb; only the
-module-global state has been replaced with explicit function arguments and a
-results container.
 """
 from __future__ import annotations
 
@@ -36,7 +32,7 @@ class MicroResult:
     ci_raw: np.ndarray = None         # CI before any clean-up (for display masking)
     n_filled: int = 0                 # low-CI pixels replaced by neighbour-fill
     rgb_map: np.ndarray = None
-    # phases (MTEX-style multiphase); single-phase scans -> one entry
+    # phases (multiphase); single-phase scans -> one entry
     phases: list = field(default_factory=list)   # ordered dicts: id,name,sym,pg,lattice,kind
     dominant_pid: int = 0             # phase id with the most valid pixels
     pid2phase: dict = field(default_factory=dict)
@@ -126,10 +122,9 @@ def load_scan(cfg: Config, log=print) -> MicroResult:
     # keep the raw (pre-fill) CI for display masking decisions
     res.ci_raw = res.ci.copy()
 
-    # --- Phases present in this scan (MTEX-style multiphase) -----------------
+    # --- Phases present in this scan (multiphase) ----------------------------
     # Ordered list of the phases actually present in the data, each with its own
-    # crystal point group. Single-phase scans -> one entry (mirrors notebook
-    # loader cell 11a31d99).
+    # crystal point group. Single-phase scans -> one entry.
     def _pg_for(pg_str):
         return Phase(name="x", point_group=pg_str).point_group
 
@@ -249,8 +244,7 @@ def compute_misorientation(cfg: Config, res: MicroResult, log=print):
     # Per-phase orientations + misorientation. Neighbour pairs are only meaningful
     # within the SAME phase (you cannot compare a BCC orientation to an FCC one),
     # so cross-phase neighbours get misorientation = +inf and thus act as
-    # boundaries (they never link grains and draw as boundaries) -- exactly how
-    # MTEX treats phase boundaries. Mirrors notebook cell 11fdc96a.
+    # boundaries (they never link grains and draw as boundaries).
     ny, nx = res.ny, res.nx
     dom_pg = res.pid2phase[res.dominant_pid]["pg"]
     ori = Orientation.from_euler(res.euler, symmetry=dom_pg).reshape(ny, nx)
@@ -297,8 +291,7 @@ def compute_ipf(cfg: Config, res: MicroResult, log=print):
     from orix.vector import Vector3d
 
     # IPF colouring is symmetry-dependent, so colour each phase with ITS OWN
-    # point group and composite into one map (MTEX-style multiphase IPF).
-    # Mirrors notebook cell 5075d2a8.
+    # point group and composite into one map (multiphase IPF).
     ny, nx = res.ny, res.nx
     rgb = np.zeros((ny * nx, 3))
     phase_flat = res.phase.ravel()
@@ -311,7 +304,7 @@ def compute_ipf(cfg: Config, res: MicroResult, log=print):
         rgb[sel] = key.orientation2color(ori_p)
     rgb = rgb.reshape(ny, nx, 3).copy()
     if not cfg.ci_mask:
-        # notebook behaviour: grey out sub-threshold CI pixels.
+        # grey out sub-threshold CI pixels.
         rgb[res.ci < cfg.ci_threshold] = cfg.low_ci_fill
     # when ci_mask is on, low-CI pixels were neighbour-filled with valid
     # orientations, so the IPF map shows them coloured (clean) rather than grey.

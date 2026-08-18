@@ -1,23 +1,19 @@
-"""MTEX-style ODF estimation from EBSD orientations — de la Vallee Poussin
-kernel density, computed as a Wigner-D (generalized spherical harmonic) series
-with arbitrary crystal and specimen symmetry.
+"""ODF estimation from EBSD orientations — de la Vallee Poussin kernel density,
+computed as a Wigner-D (generalized spherical harmonic) series with arbitrary
+crystal and specimen symmetry.
 
-This reproduces MTEX's `calcDensity(ori, 'halfwidth', hw)`:
+It computes the kernel density
   f(g) = (1/M) * sum_i  psi_hw( g * g_i^-1 )
 represented in the harmonic (Fourier on SO(3)) domain so it is fast to evaluate
 on a dense Euler grid and yields the texture index J directly.
 
-Why not `gsh_core`?  That vendored PyMKS basis is not correctly crystal-
-symmetrized (a single crystal expressed in different symmetry-equivalent Euler
-angles gave different ODFs).  This module instead takes trustworthy Wigner-D
-functions from the `spherical` library and imposes symmetry explicitly by
-projecting the harmonic coefficients onto the crystal- and specimen-symmetric
-subspace — verified invariant to machine precision.
+Symmetry is imposed explicitly: Wigner-D functions from the `spherical` library
+are projected onto the crystal- and specimen-symmetric subspace, so a single
+crystal expressed in different symmetry-equivalent Euler angles gives the same
+ODF (verified invariant to machine precision). A naive, non-symmetrized basis
+does not have this property.
 
 Convention: the EBSD .ang Euler angles are Bunge (phi1, Phi, phi2) in radians.
-To match MTEX's `convertEuler2SpatialReferenceFrame` + internal ZYZ handling we
-map  Bunge(phi1,Phi,phi2) -> ZYZ(phi1-pi/2, Phi, phi2+pi/2)  and take the
-inverse rotation.  (Verified against MTEX on DP590: peak positions + max mrd.)
 
 Dependencies: numpy, scipy, orix, spherical, quaternionic.
 """
@@ -32,7 +28,7 @@ from orix.quaternion.symmetry import Symmetry
 
 # ----------------------------------------------------------------------- kernel
 def dlvp_kappa(halfwidth_deg: float) -> float:
-    """de la Vallee Poussin concentration kappa from the halfwidth (MTEX)."""
+    """de la Vallee Poussin concentration kappa from the halfwidth."""
     hw = np.radians(halfwidth_deg)
     return 0.5 * np.log(0.5) / np.log(np.cos(hw / 2.0))
 
@@ -44,7 +40,7 @@ def dlvp_peak(kappa: float) -> float:
 
 def _dlvp_Ahat(kappa: float, L: int) -> np.ndarray:
     """Chebyshev/Legendre coefficients A_hat_l of the dLVP kernel (A_hat_0 = 1).
-    These multiply each Wigner degree-l block (MTEX SO3DeLaValleePoussinKernel)."""
+    These multiply each Wigner degree-l block."""
     A = np.zeros(L + 1)
     A[0] = 1.0
     if L >= 1:
@@ -60,10 +56,9 @@ def _matched_quats(eulers_bunge: np.ndarray) -> np.ndarray:
 
     The frame map only relabels the ODF in Euler space (it cancels in the
     self-consistent build/eval), so it does not affect J, symmetry invariance,
-    or single-crystal recovery. It DOES set where peaks land relative to MTEX's
-    phi2-section axes. Verified against MTEX on DP590 (cubic+orthorhombic): the
-    identity map reproduces MTEX's peak positions and max intensity (~5.5 mrd);
-    the inverse map does not. So we use orix's orientation directly (Bunge)."""
+    or single-crystal recovery. It DOES set where peaks land relative to the
+    phi2-section axes; the identity map (orix orientation, Bunge) is used
+    directly."""
     e = np.atleast_2d(np.asarray(eulers_bunge, float))
     return Orientation.from_euler(e).data
 
@@ -81,7 +76,7 @@ def _proper_group_quats(sym: Symmetry) -> np.ndarray:
 
 # ------------------------------------------------------------------------- ODF
 class ODF:
-    """MTEX-style de la Vallee Poussin kernel ODF with crystal + specimen symmetry.
+    """de la Vallee Poussin kernel ODF with crystal + specimen symmetry.
 
     Parameters
     ----------
@@ -92,7 +87,7 @@ class ODF:
         hexagonal, C1 for triclinic specimen, D2 for orthorhombic specimen...).
         Only the PROPER rotations are used.
     halfwidth_deg : float
-        Kernel halfwidth (MTEX default 10).
+        Kernel halfwidth (default 10).
     bandwidth : int or None
         Harmonic degree L. None -> auto (round(kappa), capped at max_L).
     max_L : int

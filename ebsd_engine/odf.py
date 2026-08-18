@@ -1,12 +1,10 @@
-"""ODF / texture analysis — de la Vallee Poussin kernel density (MTEX-style).
+"""ODF / texture analysis — de la Vallee Poussin kernel density.
 
-Two mathematically-equivalent engines (verified corr=1.0000), selected by
-cfg.odf_method:
+Two mathematically-equivalent engines, selected by cfg.odf_method:
   "kernel"   = direct kernel sum over orientations (vectorized quaternions;
                needs only orix).
-  "harmonic" = Wigner-D / GSH series (odf_mtex.ODF; needs spherical+quaternionic;
-               this is MTEX's internal algorithm).
-Both give f(g) >= 0, no ringing, and no Phi=pi NaN (the old gsh_core bug).
+  "harmonic" = Wigner-D / GSH series (odf_harmonic.ODF; needs spherical+quaternionic).
+Both give f(g) >= 0, no ringing, and no Phi=pi NaN.
 Crystal symmetry = cfg.crystal_sym ; specimen symmetry = cfg.sample_sym.
 """
 from __future__ import annotations
@@ -28,7 +26,7 @@ _SAMPLE_GROUPS = {"triclinic": "C1", "monoclinic": "C2", "orthorhombic": "D2"}
 
 @dataclass
 class PhaseODF:
-    """One phase's ODF result (MTEX-style per-phase ODF)."""
+    """One phase's ODF result (per-phase ODF)."""
     pid: int = 0
     name: str = ""
     sym: str = ""
@@ -114,9 +112,8 @@ def _make_kernel_eval(eulers_odf, pg, hw_deg):
 
 def _build_phase_odf_eval(cfg, eulers_odf, pg, log):
     """Return (odf_eval, J) for one phase's orientations + point group, using the
-    selected engine. The kernel/harmonic math is IDENTICAL to the single-phase
-    code; this just wraps the specimen-symmetry expansion + engine dispatch so it
-    can be called once per phase. Mirrors notebook cell 38b7d124 `_build_odf`."""
+    selected engine. Wraps the specimen-symmetry expansion + engine dispatch so it
+    can be called once per phase."""
     from orix.quaternion import Orientation, Rotation
     import orix.quaternion.symmetry as _sym
     sgrp = getattr(_sym, _SAMPLE_GROUPS[cfg.sample_sym])
@@ -130,8 +127,8 @@ def _build_phase_odf_eval(cfg, eulers_odf, pg, log):
             eul_use = eulers_odf
         odf_eval, J = _make_kernel_eval(eul_use, pg, cfg.odf_halfwidth)
     elif cfg.odf_method == "harmonic":
-        from . import odf_mtex
-        _o = odf_mtex.ODF(eulers_odf, crystal_symmetry=pg, specimen_symmetry=sgrp,
+        from . import odf_harmonic
+        _o = odf_harmonic.ODF(eulers_odf, crystal_symmetry=pg, specimen_symmetry=sgrp,
                           halfwidth_deg=cfg.odf_halfwidth, max_L=cfg.harmonic_lmax)
         odf_eval = lambda e: _o.eval(np.atleast_2d(e))
         J = _o.J
@@ -141,10 +138,9 @@ def _build_phase_odf_eval(cfg, eulers_odf, pg, log):
 
 
 def run_odf(cfg: Config, res: MicroResult, log=print) -> ODFResult:
-    """Per-phase ODF (MTEX-style): loop over res.phases, honour cfg.odf_phase_id,
-    each phase with its own crystal point group. Keeps a dominant-phase view under
-    the old single-phase attribute names so plotting.py/report.py keep working.
-    Mirrors notebook cells 31a17096 + 38b7d124."""
+    """Per-phase ODF: loop over res.phases, honour cfg.odf_phase_id, each phase
+    with its own crystal point group. Keeps a dominant-phase view under the old
+    single-phase attribute names so plotting.py/report.py keep working."""
     from orix.quaternion import Orientation, Rotation
     from orix.vector import Vector3d
 

@@ -1,6 +1,6 @@
-"""EBSD + ODF analysis engine — extracted from EBSD_ODF_combined.ipynb.
+"""EBSD + ODF analysis engine.
 
-Pure-compute layer (no GUI). Drives the same pipeline the notebook runs:
+Pure-compute layer (no GUI). Pipeline:
   load .ang -> microstructure (maps, grains, ASTM E2627) -> ODF (GSH texture).
 """
 from .config import Config

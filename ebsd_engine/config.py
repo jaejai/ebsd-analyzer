@@ -1,7 +1,7 @@
 """Configuration for the EBSD + ODF analysis pipeline.
 
-Mirrors the `## 1 — Configuration` cell of EBSD_ODF_combined.ipynb, but as a
-dataclass so the GUI / CLI can drive it instead of editing module globals.
+A dataclass so the GUI / CLI can drive the pipeline instead of editing module
+globals.
 """
 from __future__ import annotations
 
@@ -34,14 +34,14 @@ class Config:
     # --- Microstructure params ----------------------------------------------
     grid_ratio: float = 1.0
     crystal_sym: Optional[str] = None  # None = auto-detect from file; else manual
-                                       # override (e.g. "m-3m" DP590 ferrite, cubic)
+                                       # override (e.g. "m-3m" for cubic ferrite)
     ipf_dir: tuple = (0, 0, 1)         # custom IPF direction (advanced); the three
                                        # standard IPF maps [100]/[010]/[001] are
                                        # always available regardless of this.
     ci_threshold: float = 0.1
     min_grain_px: int = 5
     low_ci_fill: float = 0.15          # grey level for sub-threshold CI pixels (IPF)
-    connectivity: int = 4              # grain neighbour connectivity: 4 (notebook) or 8
+    connectivity: int = 4              # grain neighbour connectivity: 4 or 8
     ci_mask: bool = False              # neighbour-fill low-CI pixels (CI<ci_threshold)
                                        # before misorientation/segmentation/grain size.
                                        # Default OFF (raw): only turn on to clean
@@ -89,18 +89,17 @@ class Config:
 
     # --- ODF / texture params ------------------------------------------------
     lattice: str = "BCC"               # "FCC" or "BCC" — reference components
-    odf_method: str = "kernel"         # de la Vallee Poussin kernel-density ODF
-                                       # (like MTEX calcDensity). Two equivalent
-                                       # engines (verified corr=1.0000):
+    odf_method: str = "kernel"         # de la Vallee Poussin kernel-density ODF.
+                                       # Two equivalent engines:
                                        #  "kernel"   = direct sum (orix only).
                                        #  "harmonic" = Wigner-D/GSH series (needs
                                        #               spherical+quaternionic).
                                        # Both f(g)>=0, no ringing, no Phi=pi NaN.
-    odf_halfwidth: float = 10.0        # kernel halfwidth [deg] (MTEX default 10)
+    odf_halfwidth: float = 10.0        # kernel halfwidth [deg], default 10
     sample_sym: str = "triclinic"      # "triclinic"|"monoclinic"|"orthorhombic"
     harmonic_lmax: int = 28            # bandwidth for odf_method="harmonic"
     odf_phase_id: Optional[int] = None # None = all phases; int = restrict ODF to
-                                       # that phase id (MTEX-style per-phase ODF).
+                                       # that phase id (per-phase ODF).
     n_sample: Optional[int] = 20000    # subsample for ODF speed; None = all
     section_step: float = 5.0          # Euler grid step [deg] for ODF plotting
     phi2_sections: tuple = (0, 15, 30, 45, 60, 75, 90)
@@ -117,7 +116,7 @@ class Config:
     slide_w_in: float = 13.333
     slide_h_in: float = 7.5
     fig_dpi: int = 150
-    report_title: str = "DP590_Initial"
+    report_title: str = "EBSD Analysis"
 
     # --- Reproducibility -----------------------------------------------------
     seed: int = 42

@@ -205,7 +205,7 @@ def build(out_path, figdir):
         for i, (t, s) in enumerate([
             ("Multi-format input", ".ang (TSL text), .osc (EDAX binary), .ctf / h5ebsd"),
             ("Microstructure", "IQ / CI / IPF maps, configurable boundaries,\nASTM E2627 grain size"),
-            ("Texture", "MTEX-style ODF (kernel or harmonic),\nphi2 sections, alpha / gamma fibers"),
+            ("Texture", "ODF (kernel or harmonic),\nphi2 sections, alpha / gamma fibers"),
             ("Multiphase", "per-phase symmetry, per-phase ODF, phase boundaries"),
             ("Export", "PowerPoint report with selectable content"),
         ]):
@@ -346,7 +346,7 @@ def build(out_path, figdir):
         # -------------------------------------------------- multiphase
         m.h1("5  Multiphase scans")
         m.para("When the file header declares more than one phase, every stage becomes "
-               "phase-aware, following the same conventions as MTEX:")
+               "phase-aware:")
         m.bullet("Each phase keeps its own crystal symmetry; IPF colouring uses the "
                  "symmetry of the phase that each pixel belongs to.")
         m.bullet("Misorientation is only computed between neighbours of the same "
@@ -378,12 +378,12 @@ def build(out_path, figdir):
 
         m.h1("7  Step 4 — Texture (ODF)")
         m.para("The orientation distribution function is estimated with a de la Vallée "
-               "Poussin kernel, the same approach MTEX uses. Two mathematically "
-               "equivalent engines are available and agree to within numerical noise.")
+               "Poussin kernel. Two mathematically equivalent engines are available "
+               "and agree to within numerical noise.")
         m.kv("kernel", "Direct kernel summation over orientations. Needs only orix.")
-        m.kv("harmonic", "Wigner-D / generalised spherical harmonic series — MTEX's "
-             "internal algorithm. Uses the spherical and quaternionic packages.")
-        m.kv("Kernel halfwidth", "Kernel width in degrees. 10° is the MTEX default; "
+        m.kv("harmonic", "Wigner-D / generalised spherical harmonic series. Uses the "
+             "spherical and quaternionic packages.")
+        m.kv("Kernel halfwidth", "Kernel width in degrees. 10° is the default; "
              "smaller values give sharper, noisier textures.")
         m.kv("Specimen symmetry", "triclinic (none), monoclinic, or orthorhombic — "
              "orthorhombic folds the ODF about RD, TD and ND.")
@@ -434,9 +434,6 @@ def build(out_path, figdir):
                 "    report.py          PowerPoint builder",
                 "  ui/                  GUI widgets, steps and theme",
                 "  packaging/           build helpers and this manual generator"])
-        m.note("The .osc reader is derived from MTEX's BSD-licensed loadEBSD_osc.m "
-               "and was validated against matching .ang exports: identical point "
-               "counts and Euler / position / CI values to float32 precision.")
 
         m.close_page()
 

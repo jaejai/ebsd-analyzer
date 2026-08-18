@@ -1,6 +1,6 @@
 """EBSD ODF Analyzer — standalone desktop GUI.
 
-Faithful to 'EBSD ODF Analyzer.dc.html': a 5-stage pipeline
+A 5-stage pipeline
   1 Load & Resample  2 Microstructure  3 Grain Size  4 Texture (ODF)  5 Report
 with a step-nav sidebar, per-step parameter panels (basic + Advanced expander),
 a metric header bar, per-step result panes (stat cards + embedded figures),
@@ -496,12 +496,10 @@ def _selftest():
         import matplotlib
         matplotlib.use("Agg")
         from ebsd_engine import Config, run_microstructure, run_odf, build_report
-        # locate a .ang: next to the exe, or the dev dp_data folder
-        candidates = [
-            os.path.join(ROOT, "dp_data", "DP590-InitialX1000_pre(1).ang"),
-            os.path.join(ROOT, "dp_data", "DP590_Initial_x2000(1).ang"),
-            os.path.join(os.path.dirname(sys.executable), "DP590_Initial_x2000(1).ang"),
-        ]
+        # locate any .ang for a headless self-test: in the app folder or next to the exe
+        import glob
+        candidates = sorted(glob.glob(os.path.join(ROOT, "*.ang"))) + \
+                     sorted(glob.glob(os.path.join(os.path.dirname(sys.executable), "*.ang")))
         ang = next((c for c in candidates if os.path.isfile(c)), None)
         if ang is None:
             print("SELFTEST: no .ang found; import-only check")
